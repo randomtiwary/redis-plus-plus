@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -62,6 +63,9 @@ struct ConnectionOptions {
 
     std::string user = "default";
 
+    /// Password sent in the AUTH command. For managed Redis services that
+    /// authenticate with a JWT, set this to the JWT string (or keep it in sync
+    /// via `JwtAuthManager` / `ConnectionPool::update_password`).
     std::string password;
 
     int db = 0;
@@ -126,6 +130,22 @@ public:
 
     void reconnect();
 
+    /// Re-authenticate this live connection with a new password (JWT) without
+    /// dropping the TCP connection. Updates the stored options and password
+    /// generation on success. On failure the connection is left broken so the
+    /// pool can reconnect lazily.
+    void reauth(const std::string &password);
+
+    /// Password generation this connection was last authenticated with.
+    /// Used by the pool / JWT manager to detect stale credentials.
+    std::uint64_t password_generation() const {
+        return _password_generation;
+    }
+
+    void set_password_generation(std::uint64_t generation) {
+        _password_generation = generation;
+    }
+
     auto create_time() const
         -> std::chrono::time_point<std::chrono::steady_clock> {
         return _create_time;
@@ -147,6 +167,11 @@ public:
 
     const ConnectionOptions& options() const {
         return _opts;
+    }
+
+    /// Update password stored in options (does not send AUTH by itself).
+    void set_password(std::string password) {
+        _opts.password = std::move(password);
     }
 
     friend void swap(Connection &lhs, Connection &rhs) noexcept;
@@ -198,6 +223,10 @@ private:
     std::chrono::time_point<std::chrono::steady_clock> _last_active{};
 
     ConnectionOptions _opts;
+
+    // Generation of the password used for the last successful AUTH.
+    // 0 means "not tracked" (connections created without JWT auth).
+    std::uint64_t _password_generation = 0;
 
     // TODO: define _tls_ctx before _ctx
     tls::TlsContextUPtr _tls_ctx;

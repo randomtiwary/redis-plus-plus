@@ -47,6 +47,7 @@
 #include "threads_test.h"
 #include "stream_cmds_test.h"
 #include "cluster_test.h"
+#include "jwt_auth_test.h"
 #include "benchmark_test.h"
 
 #ifdef REDIS_PLUS_PLUS_RUN_ASYNC_TEST
@@ -375,6 +376,11 @@ void run_test(const sw::redis::ConnectionOptions &opts, const TestOptions &test_
     sanity_test.run();
 
     std::cout << "Pass sanity tests" << std::endl;
+
+    sw::redis::test::JwtAuthTest<RedisInstance> jwt_auth_test(opts);
+    jwt_auth_test.run();
+
+    std::cout << "Pass jwt auth tests" << std::endl;
 
     sw::redis::test::ConnectionCmdTest<RedisInstance> connection_test(instance);
     connection_test.run();

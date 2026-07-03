@@ -84,10 +84,6 @@ jobs:
       # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
-    - name: JWT reauth unit tests
-      working-directory: ${{ steps.strings.outputs.build-output-dir }}
-      run: ./test/jwt_auth_test
-
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: ./test/test_redis++ -h 127.0.0.1 -p 6379 -n 127.0.0.1 -c 7000

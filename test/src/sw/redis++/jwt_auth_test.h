@@ -17,6 +17,11 @@
 #ifndef SEWENEW_REDISPLUSPLUS_TEST_JWT_AUTH_TEST_H
 #define SEWENEW_REDISPLUSPLUS_TEST_JWT_AUTH_TEST_H
 
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
 #include <sw/redis++/redis++.h>
 
 namespace sw {
@@ -25,10 +30,12 @@ namespace redis {
 
 namespace test {
 
-template <typename RedisInstance>
+// Offline JWT/reauth coverage. Not parameterized on RedisInstance because it
+// exercises connection-pool credential rotation with an in-process fake token
+// fetcher and never talks to a server.
 class JwtAuthTest {
 public:
-    explicit JwtAuthTest(const ConnectionOptions &opts) : _opts(opts) {}
+    explicit JwtAuthTest(const ConnectionOptions &opts = {}) : _opts(opts) {}
 
     void run();
 
@@ -69,6 +76,12 @@ private:
                                 std::uint64_t generation) const;
 
     std::string _fake_jwt() const;
+
+    TokenFetcher _counting_fetcher(const std::shared_ptr<std::atomic<int>> &counter) const;
+
+    void _expect_error(const std::function<void()> &fn, const std::string &msg) const;
+
+    JwtAuthOptions _base_opts() const;
 
     ConnectionOptions _opts;
 };

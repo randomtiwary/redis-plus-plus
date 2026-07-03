@@ -24,6 +24,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -93,7 +94,7 @@ public:
     std::pair<std::string, std::uint64_t> snapshot() const;
 
 private:
-    mutable std::mutex _mutex;
+    mutable std::shared_mutex _mutex;
     std::string _password;
     std::uint64_t _generation = 0;
 };

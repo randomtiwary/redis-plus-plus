@@ -17,13 +17,10 @@
 #ifndef SEWENEW_REDISPLUSPLUS_TEST_JWT_AUTH_TEST_HPP
 #define SEWENEW_REDISPLUSPLUS_TEST_JWT_AUTH_TEST_HPP
 
-#include <atomic>
 #include <chrono>
-#include <memory>
 #include <mutex>
 #include <random>
 #include <set>
-#include <string>
 #include <thread>
 #include <vector>
 #include <sw/redis++/connection.h>
@@ -54,15 +51,41 @@ inline std::string random_segment(std::size_t len = 16) {
 
 } // namespace
 
-template <typename RedisInstance>
-std::string JwtAuthTest<RedisInstance>::_fake_jwt() const {
+inline std::string JwtAuthTest::_fake_jwt() const {
     // Fake JWT shape with a random payload. No crypto and no network.
     return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + random_segment(24) + "." + random_segment(32);
 }
 
-template <typename RedisInstance>
-ConnectionOptions JwtAuthTest<RedisInstance>::_unreachable_opts(
-        const std::string &password) const {
+inline TokenFetcher JwtAuthTest::_counting_fetcher(
+        const std::shared_ptr<std::atomic<int>> &counter) const {
+    return [counter]() {
+        counter->fetch_add(1);
+        return std::string("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.")
+            + random_segment(24) + "." + random_segment(32);
+    };
+}
+
+inline void JwtAuthTest::_expect_error(const std::function<void()> &fn,
+        const std::string &msg) const {
+    bool thrown = false;
+    try {
+        fn();
+    } catch (const Error &) {
+        thrown = true;
+    }
+    REDIS_ASSERT(thrown, msg);
+}
+
+inline JwtAuthOptions JwtAuthTest::_base_opts() const {
+    JwtAuthOptions opts;
+    opts.token_fetcher = [this]() { return _fake_jwt(); };
+    opts.refresh_interval = std::chrono::hours(1);
+    opts.reauth_batch_interval = std::chrono::milliseconds(0);
+    opts.prefer_inline_reauth = false;
+    return opts;
+}
+
+inline ConnectionOptions JwtAuthTest::_unreachable_opts(const std::string &password) const {
     ConnectionOptions opts;
     opts.host = "127.0.0.1";
     opts.port = 1;
@@ -73,16 +96,14 @@ ConnectionOptions JwtAuthTest<RedisInstance>::_unreachable_opts(
     return opts;
 }
 
-template <typename RedisInstance>
-ConnectionPoolOptions JwtAuthTest<RedisInstance>::_pool_opts(std::size_t size) const {
+inline ConnectionPoolOptions JwtAuthTest::_pool_opts(std::size_t size) const {
     ConnectionPoolOptions opts;
     opts.size = size;
     opts.wait_timeout = std::chrono::milliseconds(50);
     return opts;
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_seed_idle_connections(ConnectionPool &pool,
+inline void JwtAuthTest::_seed_idle_connections(ConnectionPool &pool,
         std::size_t n,
         const std::string &password,
         std::uint64_t generation) const {
@@ -96,8 +117,7 @@ void JwtAuthTest<RedisInstance>::_seed_idle_connections(ConnectionPool &pool,
     }
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::run() {
+inline void JwtAuthTest::run() {
     _test_jwt_as_password();
     _test_credentials();
     _test_credentials_thread_safety();
@@ -113,8 +133,7 @@ void JwtAuthTest<RedisInstance>::run() {
     _test_concurrent_refresh();
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_jwt_as_password() {
+inline void JwtAuthTest::_test_jwt_as_password() {
     auto jwt = _fake_jwt();
     ConnectionOptions opts = _opts;
     opts.password = jwt;
@@ -123,8 +142,7 @@ void JwtAuthTest<RedisInstance>::_test_jwt_as_password() {
             "JWT password should keep dotted segments");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_credentials() {
+inline void JwtAuthTest::_test_credentials() {
     JwtCredentials empty;
     REDIS_ASSERT(empty.password().empty(), "default credentials should have empty password");
     REDIS_ASSERT(empty.generation() == 0, "default credentials generation should be 0");
@@ -150,8 +168,7 @@ void JwtAuthTest<RedisInstance>::_test_credentials() {
     REDIS_ASSERT(creds.password() != t2, "password should change on update");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_credentials_thread_safety() {
+inline void JwtAuthTest::_test_credentials_thread_safety() {
     auto creds = std::make_shared<JwtCredentials>(_fake_jwt());
     std::atomic<bool> start{false};
     std::vector<std::thread> threads;
@@ -160,8 +177,8 @@ void JwtAuthTest<RedisInstance>::_test_credentials_thread_safety() {
             while (!start.load()) {
             }
             for (int j = 0; j < 100; ++j) {
-                creds->update("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + random_segment(24)
-                        + "." + random_segment(32));
+                creds->update(std::string("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.")
+                        + random_segment(24) + "." + random_segment(32));
                 auto snap = creds->snapshot();
                 REDIS_ASSERT(!snap.first.empty(), "concurrent snapshot password should be set");
                 REDIS_ASSERT(snap.second >= 1, "concurrent snapshot generation should be set");
@@ -175,55 +192,27 @@ void JwtAuthTest<RedisInstance>::_test_credentials_thread_safety() {
     REDIS_ASSERT(creds->generation() >= 1, "credentials should remain valid after races");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_manager_validation() {
-    {
-        bool thrown = false;
-        try {
-            JwtAuthOptions opts;
-            JwtAuthManager manager(opts);
-        } catch (const Error &) {
-            thrown = true;
-        }
-        REDIS_ASSERT(thrown, "manager should require token_fetcher");
-    }
+inline void JwtAuthTest::_test_manager_validation() {
+    _expect_error([]() {
+        JwtAuthOptions opts;
+        JwtAuthManager manager(opts);
+    }, "manager should require token_fetcher");
 
-    {
-        bool thrown = false;
-        try {
-            JwtAuthOptions opts;
-            opts.token_fetcher = [this]() { return _fake_jwt(); };
-            opts.reauth_batch_size = 0;
-            JwtAuthManager manager(opts);
-        } catch (const Error &) {
-            thrown = true;
-        }
-        REDIS_ASSERT(thrown, "manager should reject zero reauth_batch_size");
-    }
+    _expect_error([this]() {
+        auto opts = _base_opts();
+        opts.reauth_batch_size = 0;
+        JwtAuthManager manager(opts);
+    }, "manager should reject zero reauth_batch_size");
 
-    {
-        bool thrown = false;
-        try {
-            JwtAuthOptions opts;
-            opts.token_fetcher = [this]() { return _fake_jwt(); };
-            JwtAuthManager manager(opts, nullptr);
-        } catch (const Error &) {
-            thrown = true;
-        }
-        REDIS_ASSERT(thrown, "manager should reject null credentials");
-    }
+    _expect_error([this]() {
+        JwtAuthManager manager(_base_opts(), nullptr);
+    }, "manager should reject null credentials");
 
-    {
-        bool thrown = false;
-        try {
-            JwtAuthOptions opts;
-            opts.token_fetcher = []() { return std::string(); };
-            JwtAuthManager manager(opts);
-        } catch (const Error &) {
-            thrown = true;
-        }
-        REDIS_ASSERT(thrown, "manager should reject empty initial token");
-    }
+    _expect_error([]() {
+        JwtAuthOptions opts;
+        opts.token_fetcher = []() { return std::string(); };
+        JwtAuthManager manager(opts);
+    }, "manager should reject empty initial token");
 
     auto calls = std::make_shared<std::atomic<int>>(0);
     JwtAuthOptions opts;
@@ -235,22 +224,16 @@ void JwtAuthTest<RedisInstance>::_test_manager_validation() {
     };
     opts.refresh_interval = std::chrono::hours(1);
     JwtAuthManager manager(opts);
-    bool thrown = false;
-    try {
-        manager.refresh_now();
-    } catch (const Error &) {
-        thrown = true;
-    }
-    REDIS_ASSERT(thrown, "refresh_now should reject empty token");
+    _expect_error([&manager]() { manager.refresh_now(); },
+            "refresh_now should reject empty token");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_manager_refresh() {
+inline void JwtAuthTest::_test_manager_refresh() {
     auto counter = std::make_shared<std::atomic<int>>(0);
     auto seen = std::make_shared<std::vector<std::string>>();
     auto seen_mu = std::make_shared<std::mutex>();
 
-    JwtAuthOptions opts;
+    JwtAuthOptions opts = _base_opts();
     opts.token_fetcher = [counter, seen, seen_mu, this]() {
         counter->fetch_add(1);
         auto token = _fake_jwt();
@@ -260,7 +243,6 @@ void JwtAuthTest<RedisInstance>::_test_manager_refresh() {
         }
         return token;
     };
-    opts.refresh_interval = std::chrono::hours(1);
 
     JwtAuthManager manager(opts);
     REDIS_ASSERT(counter->load() == 1, "constructor should fetch initial token");
@@ -286,10 +268,7 @@ void JwtAuthTest<RedisInstance>::_test_manager_refresh() {
 
     auto creds = std::make_shared<JwtCredentials>(_fake_jwt());
     auto g0 = creds->generation();
-    JwtAuthOptions opts2;
-    opts2.token_fetcher = [this]() { return _fake_jwt(); };
-    opts2.refresh_interval = std::chrono::hours(1);
-    JwtAuthManager manager2(opts2, creds);
+    JwtAuthManager manager2(_base_opts(), creds);
     REDIS_ASSERT(manager2.credentials().get() == creds.get(),
             "manager should reuse provided credentials");
     REDIS_ASSERT(manager2.refresh_count() == 0,
@@ -299,13 +278,8 @@ void JwtAuthTest<RedisInstance>::_test_manager_refresh() {
             "refresh_now should update shared credentials");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_register_pool() {
-    JwtAuthOptions opts;
-    opts.token_fetcher = [this]() { return _fake_jwt(); };
-    opts.refresh_interval = std::chrono::hours(1);
-    opts.reauth_batch_interval = std::chrono::milliseconds(0);
-    opts.prefer_inline_reauth = false;
+inline void JwtAuthTest::_test_register_pool() {
+    JwtAuthOptions opts = _base_opts();
     JwtAuthManager manager(opts);
 
     auto jwt = manager.credentials()->password();
@@ -321,19 +295,13 @@ void JwtAuthTest<RedisInstance>::_test_register_pool() {
     REDIS_ASSERT(manager.registered_pool_count() == 1,
             "registered pool should be counted");
 
-    {
-        bool thrown = false;
-        try {
-            std::shared_ptr<ConnectionPool> null_pool;
-            manager.register_pool(null_pool);
-        } catch (const Error &) {
-            thrown = true;
-        }
-        REDIS_ASSERT(thrown, "register_pool should reject null pool");
-    }
+    _expect_error([&manager]() {
+        std::shared_ptr<ConnectionPool> null_pool;
+        manager.register_pool(null_pool);
+    }, "register_pool should reject null pool");
 
     {
-        JwtAuthManager tmp(opts);
+        JwtAuthManager tmp(_base_opts());
         {
             auto tmp_pool = std::make_shared<ConnectionPool>(_pool_opts(2), _unreachable_opts());
             tmp.register_pool(tmp_pool);
@@ -363,8 +331,7 @@ void JwtAuthTest<RedisInstance>::_test_register_pool() {
             "all pools should receive rotated generation");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_pool_password_update() {
+inline void JwtAuthTest::_test_pool_password_update() {
     auto pool = std::make_shared<ConnectionPool>(_pool_opts(4), _unreachable_opts("p1"));
     pool->update_password("p2", 7);
     REDIS_ASSERT(pool->connection_options().password == "p2",
@@ -392,8 +359,7 @@ void JwtAuthTest<RedisInstance>::_test_pool_password_update() {
             "unreachable host may fail create, options must stay updated");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_connection_helpers() {
+inline void JwtAuthTest::_test_connection_helpers() {
     ConnectionPool pool(_pool_opts(2), _unreachable_opts("jwt-1"));
     pool.update_password("jwt-1", 3);
     _seed_idle_connections(pool, 1, "jwt-1", 3);
@@ -405,13 +371,8 @@ void JwtAuthTest<RedisInstance>::_test_connection_helpers() {
 
     auto broken = Connection::make_unconnected(_unreachable_opts("x"));
     REDIS_ASSERT(broken.broken(), "unconnected placeholder should be broken");
-    bool thrown = false;
-    try {
-        broken.reauth("new-jwt");
-    } catch (const Error &) {
-        thrown = true;
-    }
-    REDIS_ASSERT(thrown, "reauth on broken connection should throw");
+    _expect_error([&broken]() { broken.reauth("new-jwt"); },
+            "reauth on broken connection should throw");
 
     ConnectionPool pool2(_pool_opts(2), _unreachable_opts("x"));
     _seed_idle_connections(pool2, 1, "x", 1);
@@ -420,8 +381,7 @@ void JwtAuthTest<RedisInstance>::_test_connection_helpers() {
             "inline reauth on broken idle connections should keep pool size stable");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_gradual_reauth() {
+inline void JwtAuthTest::_test_gradual_reauth() {
     ConnectionPool pool(_pool_opts(6), _unreachable_opts("old"));
     pool.update_password("old", 1);
     _seed_idle_connections(pool, 6, "old", 1);
@@ -459,18 +419,12 @@ void JwtAuthTest<RedisInstance>::_test_gradual_reauth() {
             "rotated connections should not be selected again");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_manager_applies_to_pools() {
+inline void JwtAuthTest::_test_manager_applies_to_pools() {
     auto counter = std::make_shared<std::atomic<int>>(0);
-    JwtAuthOptions opts;
-    opts.token_fetcher = [counter, this]() {
-        counter->fetch_add(1);
-        return _fake_jwt();
-    };
-    opts.refresh_interval = std::chrono::hours(1);
+    JwtAuthOptions opts = _base_opts();
+    opts.token_fetcher = _counting_fetcher(counter);
     opts.reauth_batch_size = 2;
     opts.reauth_batch_interval = std::chrono::milliseconds(1);
-    opts.prefer_inline_reauth = false;
 
     JwtAuthManager manager(opts);
     auto pool = std::make_shared<ConnectionPool>(_pool_opts(5), _unreachable_opts());
@@ -493,13 +447,12 @@ void JwtAuthTest<RedisInstance>::_test_manager_applies_to_pools() {
     REDIS_ASSERT(stale == 0, "all idle connections should be on the latest generation");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_background_refresh() {
+inline void JwtAuthTest::_test_background_refresh() {
     auto counter = std::make_shared<std::atomic<int>>(0);
     auto seen = std::make_shared<std::vector<std::string>>();
     auto seen_mu = std::make_shared<std::mutex>();
 
-    JwtAuthOptions opts;
+    JwtAuthOptions opts = _base_opts();
     opts.token_fetcher = [counter, seen, seen_mu, this]() {
         counter->fetch_add(1);
         auto token = _fake_jwt();
@@ -510,8 +463,6 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
         return token;
     };
     opts.refresh_interval = std::chrono::milliseconds(50);
-    opts.reauth_batch_interval = std::chrono::milliseconds(0);
-    opts.prefer_inline_reauth = false;
 
     JwtAuthManager manager(opts);
     auto pool = std::make_shared<ConnectionPool>(_pool_opts(2), _unreachable_opts());
@@ -546,7 +497,7 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
             "token_fetcher should not run after stop");
 
     auto calls = std::make_shared<std::atomic<int>>(0);
-    JwtAuthOptions resilient_opts;
+    JwtAuthOptions resilient_opts = _base_opts();
     resilient_opts.token_fetcher = [calls, this]() {
         auto n = calls->fetch_add(1);
         if (n == 0) {
@@ -558,7 +509,6 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
         return _fake_jwt();
     };
     resilient_opts.refresh_interval = std::chrono::milliseconds(30);
-    resilient_opts.reauth_batch_interval = std::chrono::milliseconds(0);
     JwtAuthManager resilient(resilient_opts);
     resilient.start();
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -571,11 +521,8 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
             "credentials should remain available after transient errors");
 
     auto zero_counter = std::make_shared<std::atomic<int>>(0);
-    JwtAuthOptions zero_opts;
-    zero_opts.token_fetcher = [zero_counter, this]() {
-        zero_counter->fetch_add(1);
-        return _fake_jwt();
-    };
+    JwtAuthOptions zero_opts = _base_opts();
+    zero_opts.token_fetcher = _counting_fetcher(zero_counter);
     zero_opts.refresh_interval = std::chrono::milliseconds(0);
     JwtAuthManager zero_manager(zero_opts);
     zero_manager.start();
@@ -588,11 +535,8 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
 
     auto dtor_counter = std::make_shared<std::atomic<int>>(0);
     {
-        JwtAuthOptions dtor_opts;
-        dtor_opts.token_fetcher = [dtor_counter, this]() {
-            dtor_counter->fetch_add(1);
-            return _fake_jwt();
-        };
+        JwtAuthOptions dtor_opts = _base_opts();
+        dtor_opts.token_fetcher = _counting_fetcher(dtor_counter);
         dtor_opts.refresh_interval = std::chrono::milliseconds(20);
         JwtAuthManager dtor_manager(dtor_opts);
         dtor_manager.start();
@@ -604,10 +548,8 @@ void JwtAuthTest<RedisInstance>::_test_background_refresh() {
             "destructor should stop background refresh thread");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_configurable_options() {
-    JwtAuthOptions opts;
-    opts.token_fetcher = [this]() { return _fake_jwt(); };
+inline void JwtAuthTest::_test_configurable_options() {
+    JwtAuthOptions opts = _base_opts();
     opts.refresh_interval = std::chrono::minutes(4);
     opts.reauth_batch_size = 3;
     opts.reauth_batch_interval = std::chrono::milliseconds(25);
@@ -623,17 +565,10 @@ void JwtAuthTest<RedisInstance>::_test_configurable_options() {
             "prefer_inline_reauth should be configurable");
 }
 
-template <typename RedisInstance>
-void JwtAuthTest<RedisInstance>::_test_concurrent_refresh() {
+inline void JwtAuthTest::_test_concurrent_refresh() {
     auto counter = std::make_shared<std::atomic<int>>(0);
-    JwtAuthOptions opts;
-    opts.token_fetcher = [counter, this]() {
-        counter->fetch_add(1);
-        return _fake_jwt();
-    };
-    opts.refresh_interval = std::chrono::hours(1);
-    opts.reauth_batch_interval = std::chrono::milliseconds(0);
-    opts.prefer_inline_reauth = false;
+    JwtAuthOptions opts = _base_opts();
+    opts.token_fetcher = _counting_fetcher(counter);
 
     JwtAuthManager manager(opts);
     auto pool = std::make_shared<ConnectionPool>(_pool_opts(2), _unreachable_opts());

@@ -98,6 +98,19 @@ int main(int argc, char **argv) {
         TestOptions test_options;
         std::tie(opts, cluster_node_opts, benchmark_opts, test_options) = parse_options(argc, argv);
 
+        // Offline JWT/reauth tests do not need a live server and are not tied to
+        // a specific RedisInstance type, so run them once up front.
+        std::cout << "Testing JWT auth..." << std::endl;
+        sw::redis::ConnectionOptions jwt_opts;
+        if (opts) {
+            jwt_opts = *opts;
+        } else if (cluster_node_opts) {
+            jwt_opts = *cluster_node_opts;
+        }
+        sw::redis::test::JwtAuthTest jwt_auth_test(jwt_opts);
+        jwt_auth_test.run();
+        std::cout << "Pass jwt auth tests" << std::endl;
+
         if (opts) {
             std::cout << "Testing Redis..." << std::endl;
 
@@ -376,11 +389,6 @@ void run_test(const sw::redis::ConnectionOptions &opts, const TestOptions &test_
     sanity_test.run();
 
     std::cout << "Pass sanity tests" << std::endl;
-
-    sw::redis::test::JwtAuthTest<RedisInstance> jwt_auth_test(opts);
-    jwt_auth_test.run();
-
-    std::cout << "Pass jwt auth tests" << std::endl;
 
     sw::redis::test::ConnectionCmdTest<RedisInstance> connection_test(instance);
     connection_test.run();

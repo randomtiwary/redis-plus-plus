@@ -31,24 +31,24 @@ JwtCredentials::JwtCredentials(std::string initial_password) :
     _generation(_password.empty() ? 0 : 1) {}
 
 std::string JwtCredentials::password() const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::shared_lock<std::shared_mutex> lock(_mutex);
     return _password;
 }
 
 std::uint64_t JwtCredentials::generation() const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::shared_lock<std::shared_mutex> lock(_mutex);
     return _generation;
 }
 
 std::uint64_t JwtCredentials::update(std::string password) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::unique_lock<std::shared_mutex> lock(_mutex);
     _password = std::move(password);
     ++_generation;
     return _generation;
 }
 
 std::pair<std::string, std::uint64_t> JwtCredentials::snapshot() const {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::shared_lock<std::shared_mutex> lock(_mutex);
     return {_password, _generation};
 }
 

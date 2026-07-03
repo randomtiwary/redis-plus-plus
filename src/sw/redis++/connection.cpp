@@ -178,6 +178,7 @@ void swap(Connection &lhs, Connection &rhs) noexcept {
     std::swap(lhs._ctx, rhs._ctx);
     std::swap(lhs._create_time, rhs._create_time);
     std::swap(lhs._opts, rhs._opts);
+    std::swap(lhs._password_generation, rhs._password_generation);
 }
 
 Connection::Connection(const ConnectionOptions &opts) :
@@ -197,9 +198,33 @@ Connection::Connection(const ConnectionOptions &opts) :
 }
 
 void Connection::reconnect() {
+    auto generation = _password_generation;
     Connection connection(_opts);
 
     swap(*this, connection);
+    _password_generation = generation;
+}
+
+void Connection::reauth(const std::string &password) {
+    if (broken()) {
+        throw Error("cannot reauth a broken connection");
+    }
+
+    const std::string DEFAULT_USER = "default";
+
+    // Always send AUTH so managed services that rotate JWTs receive the
+    // fresh token even when the password string happens to be empty (invalid).
+    if (_opts.user == DEFAULT_USER) {
+        cmd::auth(*this, password);
+    } else {
+        cmd::auth(*this, _opts.user, password);
+    }
+
+    auto reply = recv();
+    assert(reply);
+    reply::parse<void>(*reply);
+
+    _opts.password = password;
 }
 
 void Connection::send(int argc, const char **argv, const std::size_t *argv_len) {

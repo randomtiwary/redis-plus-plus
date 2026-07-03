@@ -55,3 +55,32 @@ if(REDIS_PLUS_PLUS_BUILD_ASYNC_TEST)
     target_compile_definitions(${PROJECT_NAME} PRIVATE REDIS_PLUS_PLUS_RUN_ASYNC_TEST)
     target_link_libraries(${PROJECT_NAME} ${REDIS_PLUS_PLUS_ASYNC_LIB})
 endif()
+
+# Standalone JWT / reauth unit tests (no Redis server, no network).
+add_executable(jwt_auth_test src/sw/redis++/jwt_auth_test.cpp)
+target_include_directories(jwt_auth_test PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../${TLS_SUB_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../${CXX_UTILS_DIR}>
+        $<BUILD_INTERFACE:${REDIS_PLUS_PLUS_GENERATED_HEADER_DIR}>)
+if(REDIS_PLUS_PLUS_BUILD_ASYNC)
+    target_include_directories(jwt_auth_test PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../${REDIS_PLUS_PLUS_ASYNC_FUTURE_HEADER}>)
+    target_compile_definitions(jwt_auth_test PRIVATE REDIS_PLUS_PLUS_HAS_ASYNC)
+endif()
+target_link_libraries(jwt_auth_test ${REDIS_PLUS_PLUS_LIB} ${CMAKE_THREAD_LIBS_INIT})
+if(REDIS_PLUS_PLUS_USE_TLS)
+    target_link_libraries(jwt_auth_test ${TEST_HIREDIS_TLS_LIB} ${OPENSSL_LIBRARIES})
+endif()
+target_link_libraries(jwt_auth_test ${REDIS_PLUS_PLUS_HIREDIS_LIBS})
+if(REDIS_PLUS_PLUS_BUILD_ASYNC)
+    if(libuv_FOUND)
+        target_link_libraries(jwt_auth_test
+            $<IF:$<TARGET_EXISTS:libuv::uv>,libuv::uv,
+                $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,
+                    $<IF:$<TARGET_EXISTS:uv>,uv,uv_a>>>)
+    elseif(REDIS_PLUS_PLUS_ASYNC_LIB)
+        target_include_directories(jwt_auth_test PRIVATE ${REDIS_PLUS_PLUS_ASYNC_LIB_HEADER})
+        target_link_libraries(jwt_auth_test ${REDIS_PLUS_PLUS_ASYNC_LIB})
+    endif()
+endif()

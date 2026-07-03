@@ -21,5 +21,6 @@
 #include "sw/redis++/redis_cluster.h"
 #include "sw/redis++/queued_redis.h"
 #include "sw/redis++/sentinel.h"
+#include "sw/redis++/jwt_auth.h"
 
 #endif // end SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H

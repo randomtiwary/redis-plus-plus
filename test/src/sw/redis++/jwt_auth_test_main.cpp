@@ -1,5 +1,5 @@
 /**************************************************************************
-   Copyright (c) 2017 sewenew
+   Copyright (c) 2026 sewenew
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -24,10 +24,8 @@ int main() {
         test.run();
         std::cout << "Pass jwt auth tests" << std::endl;
         return 0;
-    } catch (const sw::redis::Error &e) {
-        std::cerr << "JWT auth test failed: " << e.what() << std::endl;
-        return -1;
     } catch (const std::exception &e) {
+        // Covers sw::redis::Error (derives from std::exception) and other failures.
         std::cerr << "JWT auth test failed: " << e.what() << std::endl;
         return -1;
     }

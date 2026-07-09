@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <vector>
 #include <hiredis/async.h>
@@ -117,6 +118,22 @@ public:
     }
 
     void disconnect(std::exception_ptr err);
+
+    /// Password generation this connection was last authenticated with.
+    std::uint64_t password_generation() const {
+        return _password_generation.load();
+    }
+
+    void set_password_generation(std::uint64_t generation) {
+        _password_generation.store(generation);
+    }
+
+    /// Update stored password without sending AUTH.
+    void set_password(std::string password);
+
+    /// Send AUTH with a new password on a live connection when ready.
+    /// Updates stored options. On failure the connection is disconnected.
+    void reauth(const std::string &password);
 
     template <typename Result, typename ResultParser>
     Future<Result> send(FormattedCommand cmd);
@@ -247,6 +264,8 @@ private:
     AsyncContextUPtr _connect(const ConnectionOptions &opts);
 
     ConnectionOptions _opts;
+
+    std::atomic<std::uint64_t> _password_generation{0};
 
     EventLoopWPtr _loop;
 

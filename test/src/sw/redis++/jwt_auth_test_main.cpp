@@ -14,13 +14,21 @@
    limitations under the License.
  *************************************************************************/
 
-#ifndef SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
-#define SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
+#include <iostream>
+#include "jwt_auth_test.h"
 
-#include "sw/redis++/redis.h"
-#include "sw/redis++/redis_cluster.h"
-#include "sw/redis++/queued_redis.h"
-#include "sw/redis++/sentinel.h"
-#include "sw/redis++/jwt_auth.h"
-
-#endif // end SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
+int main() {
+    try {
+        std::cout << "Testing JWT auth..." << std::endl;
+        sw::redis::test::JwtAuthTest test;
+        test.run();
+        std::cout << "Pass jwt auth tests" << std::endl;
+        return 0;
+    } catch (const sw::redis::Error &e) {
+        std::cerr << "JWT auth test failed: " << e.what() << std::endl;
+        return -1;
+    } catch (const std::exception &e) {
+        std::cerr << "JWT auth test failed: " << e.what() << std::endl;
+        return -1;
+    }
+}

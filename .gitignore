@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# Local build artifacts and dependency prefixes
+/build/
+/build-*/
+/.deps/
+/.deps-src/

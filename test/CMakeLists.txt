@@ -50,6 +50,18 @@ endif()
 
 target_link_libraries(${PROJECT_NAME} ${REDIS_PLUS_PLUS_LIB} ${CMAKE_THREAD_LIBS_INIT})
 
+# Standalone offline JWT/reauth unit tests (no Redis server required).
+add_executable(jwt_auth_test src/sw/redis++/jwt_auth_test_main.cpp)
+target_include_directories(jwt_auth_test PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../${TLS_SUB_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../${CXX_UTILS_DIR}>
+        $<BUILD_INTERFACE:${REDIS_PLUS_PLUS_GENERATED_HEADER_DIR}>)
+target_link_libraries(jwt_auth_test ${REDIS_PLUS_PLUS_LIB} ${REDIS_PLUS_PLUS_HIREDIS_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+if(WIN32)
+    target_link_libraries(jwt_auth_test ws2_32)
+endif()
+
 # libuv dependency
 if(REDIS_PLUS_PLUS_BUILD_ASYNC_TEST)
     target_compile_definitions(${PROJECT_NAME} PRIVATE REDIS_PLUS_PLUS_RUN_ASYNC_TEST)

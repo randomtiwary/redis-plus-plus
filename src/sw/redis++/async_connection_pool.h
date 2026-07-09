@@ -20,11 +20,13 @@
 #include <cassert>
 #include <unordered_set>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <memory>
 #include <exception>
 #include <condition_variable>
 #include <deque>
+#include <string>
 #include "sw/redis++/connection.h"
 #include "sw/redis++/connection_pool.h"
 #include "sw/redis++/async_connection.h"
@@ -99,6 +101,19 @@ public:
 
     std::shared_ptr<AsyncConnectionPool> clone();
 
+    /// Update password for new connections and reauth of existing ones.
+    void update_password(std::string password, std::uint64_t generation = 0);
+
+    std::uint64_t password_generation() const;
+
+    /// Gradually re-authenticate or soft-drop idle connections in batches.
+    std::size_t reauth_idle_connections(std::size_t batch_size,
+                                        const std::string &password,
+                                        std::uint64_t generation,
+                                        bool inline_reauth = true);
+
+    std::size_t idle_size() const;
+
     // These update_node_info overloads are called by AsyncSentinel.
     void update_node_info(const std::string &host,
             int port,
@@ -119,6 +134,8 @@ private:
                             const std::chrono::milliseconds &connection_lifetime,
                             const std::chrono::milliseconds &connection_idle_time) const;
 
+    void _ensure_fresh_credentials(const AsyncConnectionSPtr &connection);
+
     void _update_connection_opts(const std::string &host, int port) {
         _opts.host = host;
         _opts.port = port;
@@ -138,7 +155,9 @@ private:
 
     std::size_t _used_connections = 0;
 
-    std::mutex _mutex;
+    std::uint64_t _password_generation = 0;
+
+    mutable std::mutex _mutex;
 
     std::condition_variable _cv;
 

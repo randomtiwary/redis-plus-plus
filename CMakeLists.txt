@@ -74,6 +74,7 @@ set(REDIS_PLUS_PLUS_SOURCES
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/connection_pool.cpp"
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/crc16.cpp"
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/errors.cpp"
+        "${REDIS_PLUS_PLUS_SOURCE_DIR}/jwt_auth.cpp"
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/pipeline.cpp"
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/redis.cpp"
         "${REDIS_PLUS_PLUS_SOURCE_DIR}/redis_cluster.cpp"

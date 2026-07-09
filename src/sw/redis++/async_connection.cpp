@@ -249,6 +249,60 @@ void AsyncConnection::update_node_info(const std::string &host, int port) {
     _opts.port = port;
 }
 
+void AsyncConnection::set_password(std::string password) {
+    std::lock_guard<std::mutex> lock(_mtx);
+    _opts.password = std::move(password);
+}
+
+namespace {
+
+void reauth_callback(redisAsyncContext *ctx, void *r, void *) {
+    assert(ctx != nullptr);
+    auto *context = static_cast<AsyncContext *>(ctx->data);
+    assert(context != nullptr);
+    auto &connection = context->connection;
+    assert(connection);
+
+    redisReply *reply = static_cast<redisReply *>(r);
+    if (reply == nullptr || reply->type == REDIS_REPLY_ERROR) {
+        auto err = std::make_exception_ptr(Error("failed to reauth async connection"));
+        connection->disconnect(err);
+    }
+}
+
+}
+
+void AsyncConnection::reauth(const std::string &password) {
+    std::string user;
+    {
+        std::lock_guard<std::mutex> lock(_mtx);
+        _opts.password = password;
+        user = _opts.user;
+    }
+
+    if (broken() || _ctx == nullptr || _state.load() != State::READY) {
+        // Not ready for inline AUTH; next reconnect picks up updated password.
+        return;
+    }
+
+    if (user == "default") {
+        if (redisAsyncCommand(_ctx, reauth_callback, nullptr, "AUTH %b",
+                    password.data(), password.size()) != REDIS_OK) {
+            auto err = std::make_exception_ptr(Error("failed to send reauth command"));
+            disconnect(err);
+            return;
+        }
+    } else {
+        if (redisAsyncCommand(_ctx, reauth_callback, nullptr, "AUTH %b %b",
+                    user.data(), user.size(),
+                    password.data(), password.size()) != REDIS_OK) {
+            auto err = std::make_exception_ptr(Error("failed to send reauth command"));
+            disconnect(err);
+            return;
+        }
+    }
+}
+
 #ifdef REDIS_PLUS_PLUS_RESP_VERSION_3
 
 void AsyncConnection::set_push_callback(redisAsyncPushFn *push_func) {

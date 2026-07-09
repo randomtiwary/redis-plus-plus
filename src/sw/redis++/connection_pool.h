@@ -19,10 +19,12 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <memory>
 #include <condition_variable>
 #include <deque>
+#include <string>
 #include "sw/redis++/connection.h"
 #include "sw/redis++/sentinel.h"
 
@@ -75,6 +77,29 @@ public:
 
     ConnectionPool clone();
 
+    /// Update the password used for newly created connections and for
+    /// re-authentication of existing ones. Thread-safe.
+    /// @param password New password / JWT.
+    /// @param generation Monotonic id from `JwtCredentials` (0 = untracked).
+    void update_password(std::string password, std::uint64_t generation = 0);
+
+    /// Password generation currently configured on the pool.
+    std::uint64_t password_generation() const;
+
+    /// Re-authenticate up to `batch_size` idle connections that are still on
+    /// an older password generation. Prefer inline AUTH when `inline_reauth`
+    /// is true; otherwise invalidate so the next use reconnects with the new
+    /// password. Returns how many connections were processed in this batch.
+    /// Idle connections not processed remain available; call again (possibly
+    /// after a delay) to continue gradual rotation.
+    std::size_t reauth_idle_connections(std::size_t batch_size,
+                                        const std::string &password,
+                                        std::uint64_t generation,
+                                        bool inline_reauth = true);
+
+    /// Number of idle connections currently sitting in the pool (for tests).
+    std::size_t idle_size() const;
+
 private:
     void _move(ConnectionPool &&that);
 
@@ -89,6 +114,8 @@ private:
     bool _need_reconnect(const Connection &connection,
                             const std::chrono::milliseconds &connection_lifetime,
                             const std::chrono::milliseconds &connection_idle_time) const;
+
+    void _ensure_fresh_credentials(Connection &connection);
 
     void _update_connection_opts(const std::string &host, int port) {
         _opts.host = host;
@@ -107,7 +134,10 @@ private:
 
     std::size_t _used_connections = 0;
 
-    std::mutex _mutex;
+    // Tracks the password generation applied via update_password / JWT manager.
+    std::uint64_t _password_generation = 0;
+
+    mutable std::mutex _mutex;
 
     std::condition_variable _cv;
 

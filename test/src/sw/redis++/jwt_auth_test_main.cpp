@@ -1,5 +1,5 @@
 /**************************************************************************
-   Copyright (c) 2017 sewenew
+   Copyright (c) 2026 sewenew
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -14,13 +14,19 @@
    limitations under the License.
  *************************************************************************/
 
-#ifndef SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
-#define SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
+#include <iostream>
+#include "jwt_auth_test.h"
 
-#include "sw/redis++/redis.h"
-#include "sw/redis++/redis_cluster.h"
-#include "sw/redis++/queued_redis.h"
-#include "sw/redis++/sentinel.h"
-#include "sw/redis++/jwt_auth.h"
-
-#endif // end SEWENEW_REDISPLUSPLUS_REDISPLUSPLUS_H
+int main() {
+    try {
+        std::cout << "Testing JWT auth..." << std::endl;
+        sw::redis::test::JwtAuthTest test;
+        test.run();
+        std::cout << "Pass jwt auth tests" << std::endl;
+        return 0;
+    } catch (const std::exception &e) {
+        // Covers sw::redis::Error (derives from std::exception) and other failures.
+        std::cerr << "JWT auth test failed: " << e.what() << std::endl;
+        return -1;
+    }
+}

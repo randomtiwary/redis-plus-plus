@@ -16,6 +16,7 @@
 
 #include "sw/redis++/connection_pool.h"
 #include <cassert>
+#include <vector>
 #include "sw/redis++/errors.h"
 
 namespace sw {
@@ -80,6 +81,7 @@ Connection ConnectionPool::fetch() {
 
     auto connection_lifetime = _pool_opts.connection_lifetime;
     auto connection_idle_time = _pool_opts.connection_idle_time;
+    auto password_generation = _password_generation;
 
     if (_sentinel) {
         auto opts = _opts;
@@ -91,26 +93,35 @@ Connection ConnectionPool::fetch() {
         if (role_changed || _need_reconnect(connection, connection_lifetime, connection_idle_time)) {
             try {
                 connection = _create(sentinel, opts);
+                connection.set_password_generation(password_generation);
             } catch (const Error &) {
                 // Failed to reconnect, return it to the pool, and retry latter.
                 release(std::move(connection));
                 throw;
             }
+        } else {
+            _ensure_fresh_credentials(connection);
         }
 
         return connection;
     }
 
+    auto opts = _opts;
     lock.unlock();
 
     if (_need_reconnect(connection, connection_lifetime, connection_idle_time)) {
         try {
+            // Ensure reconnect uses the latest password from the pool options.
+            connection.set_password(opts.password);
+            connection.set_password_generation(password_generation);
             connection.reconnect();
         } catch (const Error &) {
             // Failed to reconnect, return it to the pool, and retry latter.
             release(std::move(connection));
             throw;
         }
+    } else {
+        _ensure_fresh_credentials(connection);
     }
 
     return connection;
@@ -136,18 +147,108 @@ Connection ConnectionPool::create() {
     std::unique_lock<std::mutex> lock(_mutex);
 
     auto opts = _opts;
+    auto password_generation = _password_generation;
 
     if (_sentinel) {
         auto sentinel = _sentinel;
 
         lock.unlock();
 
-        return _create(sentinel, opts);
+        auto connection = _create(sentinel, opts);
+        connection.set_password_generation(password_generation);
+        return connection;
     } else {
         lock.unlock();
 
-        return Connection(opts);
+        Connection connection(opts);
+        connection.set_password_generation(password_generation);
+        return connection;
     }
+}
+
+void ConnectionPool::update_password(std::string password, std::uint64_t generation) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _opts.password = std::move(password);
+    _password_generation = generation;
+}
+
+std::uint64_t ConnectionPool::password_generation() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _password_generation;
+}
+
+std::size_t ConnectionPool::reauth_idle_connections(std::size_t batch_size,
+                                                    const std::string &password,
+                                                    std::uint64_t generation,
+                                                    bool inline_reauth) {
+    if (batch_size == 0) {
+        return 0;
+    }
+
+    std::vector<Connection> batch;
+    batch.reserve(batch_size);
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        while (batch.size() < batch_size && !_pool.empty()) {
+            // Prefer connections that still need a credential rotation.
+            auto it = _pool.begin();
+            for (; it != _pool.end(); ++it) {
+                if (generation != 0 && it->password_generation() != generation) {
+                    break;
+                }
+                if (generation == 0 && it->options().password != password) {
+                    break;
+                }
+            }
+            if (it == _pool.end()) {
+                break;
+            }
+            batch.push_back(std::move(*it));
+            _pool.erase(it);
+        }
+    }
+
+    std::size_t processed = 0;
+    for (auto &connection : batch) {
+        if (connection.broken()) {
+            // Leave broken; reconnect path on next fetch will use new password.
+            connection.set_password(password);
+            connection.set_password_generation(generation);
+            release(std::move(connection));
+            ++processed;
+            continue;
+        }
+
+        if (inline_reauth) {
+            try {
+                connection.reauth(password);
+                connection.set_password_generation(generation);
+            } catch (const Error &) {
+                // AUTH failed (e.g. server closed the connection). Invalidate so
+                // the next borrower reconnects with the updated password.
+                connection.set_password(password);
+                connection.set_password_generation(generation);
+                connection.invalidate();
+            }
+        } else {
+            // Soft drop: mark broken without closing every connection at once.
+            // Caller is expected to process the pool in small batches.
+            connection.set_password(password);
+            connection.set_password_generation(generation);
+            connection.invalidate();
+        }
+
+        release(std::move(connection));
+        ++processed;
+    }
+
+    return processed;
+}
+
+std::size_t ConnectionPool::idle_size() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _pool.size();
 }
 
 ConnectionPool ConnectionPool::clone() {
@@ -174,6 +275,7 @@ void ConnectionPool::_move(ConnectionPool &&that) {
     _pool_opts = std::move(that._pool_opts);
     _pool = std::move(that._pool);
     _used_connections = that._used_connections;
+    _password_generation = that._password_generation;
     _sentinel = std::move(that._sentinel);
 }
 
@@ -254,6 +356,37 @@ bool ConnectionPool::_need_reconnect(const Connection &connection,
     }
 
     return false;
+}
+
+void ConnectionPool::_ensure_fresh_credentials(Connection &connection) {
+    std::string password;
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_password_generation == 0 ||
+                connection.password_generation() == _password_generation) {
+            return;
+        }
+        password = _opts.password;
+        generation = _password_generation;
+    }
+
+    if (connection.broken()) {
+        connection.set_password(password);
+        connection.set_password_generation(generation);
+        return;
+    }
+
+    try {
+        connection.reauth(password);
+        connection.set_password_generation(generation);
+    } catch (const Error &) {
+        connection.set_password(password);
+        connection.set_password_generation(generation);
+        connection.invalidate();
+        // Reconnect with the new password so the borrower still gets a usable connection.
+        connection.reconnect();
+    }
 }
 
 }

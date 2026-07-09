@@ -47,6 +47,7 @@
 #include "threads_test.h"
 #include "stream_cmds_test.h"
 #include "cluster_test.h"
+#include "jwt_auth_test.h"
 #include "benchmark_test.h"
 
 #ifdef REDIS_PLUS_PLUS_RUN_ASYNC_TEST
@@ -91,6 +92,19 @@ void run_benchmark(const sw::redis::ConnectionOptions &opts,
 
 int main(int argc, char **argv) {
     try {
+        // Offline JWT/reauth tests do not need a live server and are not tied to
+        // a specific RedisInstance type. Run them first so they still execute
+        // even when Redis connection options are omitted (e.g. unit-only runs).
+        std::cout << "Testing JWT auth..." << std::endl;
+        sw::redis::test::JwtAuthTest jwt_auth_test;
+        jwt_auth_test.run();
+        std::cout << "Pass jwt auth tests" << std::endl;
+
+        // No further arguments: offline unit tests only.
+        if (argc <= 1) {
+            return 0;
+        }
+
         sw::redis::Optional<sw::redis::ConnectionOptions> opts;
         sw::redis::Optional<sw::redis::ConnectionOptions> cluster_node_opts;
         sw::redis::Optional<sw::redis::test::BenchmarkOptions> benchmark_opts;
